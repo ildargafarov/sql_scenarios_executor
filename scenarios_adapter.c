@@ -3,8 +3,8 @@
 #include "scenarios.h"
 
 int main() {
-    Operations_t *ops = load_operations_from_json("scenarios/dumb.json");
-    Operation_t *op = ops->first;
+    operations_t *ops = load_operations_from_json("scenarios/dumb.json");
+    operation_t *op = ops->first;
     while(op) {
         printf("id: %s, query: %s\n", op->id, op->query);
         op = op->next;
