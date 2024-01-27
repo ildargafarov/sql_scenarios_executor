@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <json-c/json.h>
+#include <string.h>
 #include "scenarios.h"
 
 operations_t* load_operations_from_json(char *filename) {
@@ -21,8 +22,8 @@ operations_t* load_operations_from_json(char *filename) {
         json_object *query_obj = json_object_object_get(item_obj, "query");
         
         operation_t *op = (operation_t *) malloc(sizeof(operation_t));
-        op->id = json_object_get_string(id_obj);
-        op->query = json_object_get_string(query_obj);
+        op->id = json_object_get_int(id_obj);
+        op->query = strdup(json_object_get_string(query_obj));
         if (i == 0) {
             ops->first = op;
         } else {

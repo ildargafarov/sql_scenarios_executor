@@ -31,5 +31,5 @@ test_dumb_scenario:
 	./scenarios_adapter
 
 run:
-	gcc -o sql_scenarios_executor sql_scenarios_executor.c utils.c scenarios.c -I/usr/include -lpq -ljson-c
+	gcc -o sql_scenarios_executor sql_scenarios_executor.c scenarios.c -I/usr/include -lpq -ljson-c
 	./sql_scenarios_executor --scenario "$(scenario)"

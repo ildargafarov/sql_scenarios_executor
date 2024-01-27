@@ -1,0 +1,14 @@
+[
+    {
+        "id": 0,
+        "query": "SELECT 0;"
+    },
+    {
+        "id": 1,
+        "query": "SHOW server_version;"
+    },
+    {
+        "id": 2,
+        "query": "SELECT 2;"
+    }
+]

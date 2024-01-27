@@ -1,5 +1,5 @@
 struct operation {
-    const char *id;
+    int id;
     const char *query;
     struct operation *next;
 };
