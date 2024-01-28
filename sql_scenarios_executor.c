@@ -20,6 +20,18 @@ char* pg_conn_params() {
     return conn_params;
 }
 
+int get_ids_number(operations_t *ops) {
+    int max_id = -1;
+    operation_t *op = ops->first;
+    for(int i = 0; i < ops->size; i++) {
+        if (op->id > max_id) {
+            max_id = op->id;
+        }
+        op = op->next;
+    }
+    return max_id + 1;
+}
+
 int main(int argc, char *argv[]) {
     const char *SCENARIO_ARG_NAME = "--scenario";
     char *scenario_filename;
@@ -41,8 +53,9 @@ int main(int argc, char *argv[]) {
     operations_t *ops = load_operations_from_json(scenario_filename);
     
     char* conn_params = pg_conn_params();
-    PGconn* conns[ops->size];
-    for (int i = 0; i < ops->size; i++) {
+    int ids_number = get_ids_number(ops);
+    PGconn* conns[ids_number];
+    for (int i = 0; i < ids_number; i++) {
         PGconn *conn = PQconnectdb(conn_params);
         if (PQstatus(conn) == CONNECTION_BAD) {
             fprintf(stderr, "Connection to database failed: %s\n", PQerrorMessage(conn));
@@ -55,7 +68,7 @@ int main(int argc, char *argv[]) {
     free(conn_params);
     
     operation_t *op = ops->first;
-    while(op) {
+    for(int i = 0; i < ops->size; i++) {
         printf("========= [%d] ==========\n=> %s\n", op->id, op->query);
         PGresult* res = PQexec(conns[op->id], op->query);
         if (PQresultStatus(res) == PGRES_FATAL_ERROR) {
@@ -77,7 +90,7 @@ int main(int argc, char *argv[]) {
         op = op->next;
     }
 
-    for (int i = 0; i < ops->size; i++) {
+    for (int i = 0; i < ids_number; i++) {
         PQfinish(conns[i]);
     }
     cleanup_operations(ops); 
