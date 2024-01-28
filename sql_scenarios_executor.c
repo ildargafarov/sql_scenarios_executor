@@ -32,6 +32,57 @@ int get_ids_number(operations_t *ops) {
     return max_id + 1;
 }
 
+void clear(operations_t *ops, PGconn* conns[]) {
+    for (int i = 0; i < get_ids_number(ops); i++) {
+        PQfinish(conns[i]);
+    }
+    cleanup_operations(ops); 
+}
+
+int init_conns(int conns_count, PGconn* conns[]) {
+    char* conn_params = pg_conn_params();
+    for (int i = 0; i < conns_count; i++) {
+        PGconn *conn = PQconnectdb(conn_params);
+        if (PQstatus(conn) == CONNECTION_BAD) {
+            fprintf(stderr, "Connection to database failed: %s\n", PQerrorMessage(conn));
+            PQfinish(conn);
+            for(int j = 0; j < i; j++) {
+                PQfinish(conns[j]);
+            }
+            free(conn_params);
+            return 1;
+        }
+        conns[i] = conn;
+    }
+    free(conn_params);
+    return 0;
+}
+
+void execute_scenario(operations_t *ops, PGconn* conns[]) {
+    operation_t *op = ops->first;
+    for(int i = 0; i < ops->size; i++) {
+        printf("========= [%d] ==========\n=> %s\n", op->id, op->query);
+        PGresult* res = PQexec(conns[op->id], op->query);
+        if (PQresultStatus(res) == PGRES_FATAL_ERROR) {
+            fprintf(stderr, "Query failed: %s\n", PQresultErrorMessage(res));
+            PQclear(res);
+            clear(ops, conns);
+            exit(1);
+        }
+        int rows = PQntuples(res);
+        int cols = PQnfields(res);
+        for (int row = 0; row < rows; row++) {
+            printf("   ------ [%d] ------\n", row);
+            for (int col = 0; col < cols; col++) {
+                printf("   %s: %s\n", PQfname(res, col), PQgetvalue(res, row, col));
+            }
+        }
+        printf("\n");
+        PQclear(res);
+        op = op->next;
+    }
+}
+
 int main(int argc, char *argv[]) {
     const char *SCENARIO_ARG_NAME = "--scenario";
     char *scenario_filename;
@@ -49,51 +100,16 @@ int main(int argc, char *argv[]) {
         }
     }
     printf("Scenario file: %s\n", scenario_filename);
-
     operations_t *ops = load_operations_from_json(scenario_filename);
     
-    char* conn_params = pg_conn_params();
     int ids_number = get_ids_number(ops);
     PGconn* conns[ids_number];
-    for (int i = 0; i < ids_number; i++) {
-        PGconn *conn = PQconnectdb(conn_params);
-        if (PQstatus(conn) == CONNECTION_BAD) {
-            fprintf(stderr, "Connection to database failed: %s\n", PQerrorMessage(conn));
-            PQfinish(conn);
-            // TODO free well
-            exit(1);
-        }
-        conns[i] = conn;
+    if(init_conns(ids_number, conns) == 1) {
+        cleanup_operations(ops); 
     }
-    free(conn_params);
     
-    operation_t *op = ops->first;
-    for(int i = 0; i < ops->size; i++) {
-        printf("========= [%d] ==========\n=> %s\n", op->id, op->query);
-        PGresult* res = PQexec(conns[op->id], op->query);
-        if (PQresultStatus(res) == PGRES_FATAL_ERROR) {
-            fprintf(stderr, "Query failed: %s\n", PQresultErrorMessage(res));
-            PQclear(res);
-            // TODO free well
-            exit(1);
-        }
-        int rows = PQntuples(res);
-        int cols = PQnfields(res);
-        for (int row = 0; row < rows; row++) {
-            printf("   ------ [%d] ------\n", row);
-            for (int col = 0; col < cols; col++) {
-                printf("   %s: %s\n", PQfname(res, col), PQgetvalue(res, row, col));
-            }
-        }
-        printf("\n");
-        PQclear(res);
-        op = op->next;
-    }
+    execute_scenario(ops, conns);
 
-    for (int i = 0; i < ids_number; i++) {
-        PQfinish(conns[i]);
-    }
-    cleanup_operations(ops); 
-    // TODO Segmentation fault? 
+    clear(ops, conns);
     return 0;
 }
