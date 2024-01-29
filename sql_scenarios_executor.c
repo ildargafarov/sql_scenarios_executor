@@ -4,6 +4,8 @@
 #include <libpq-fe.h>
 #include "scenarios.h"
 
+#define PG_CONN_PARAMS_MAX_LEN 256
+
 char* pg_conn_params() {
     const char *PG_HOST_ADDR = getenv("POSTGRES_HOST_ADDR");
     const char *PG_PORT = getenv("POSTGRES_PORT");
@@ -11,7 +13,7 @@ char* pg_conn_params() {
     const char *PG_PASS = getenv("POSTGRES_PASSWORD");
     const char *PG_DB = getenv("POSTGRES_DB");
 
-    char* conn_params = malloc(sizeof(char) * 256);
+    char* conn_params = malloc(sizeof(char) * PG_CONN_PARAMS_MAX_LEN);
     sprintf(
         conn_params, 
         "hostaddr=%s port=%s dbname=%s user=%s password=%s",
@@ -61,7 +63,20 @@ int init_conns(int conns_count, PGconn* conns[]) {
 void execute_scenario(operations_t *ops, PGconn* conns[]) {
     operation_t *op = ops->first;
     for(int i = 0; i < ops->size; i++) {
-        printf("========= [%d] ==========\n=> %s\n", op->id, op->query);
+        printf("========= [%d] ==========\n", op->id);
+
+        if(op->comment != NULL) {
+            printf("#  %s\n", op->comment);
+        }
+
+        char query_copy[strlen(op->query) + 1];
+        strcpy(query_copy, op->query);
+        char *query_item = strtok(query_copy, ";");
+        while(query_item != NULL) {
+            printf("=> %s\n", query_item);
+            query_item = strtok(NULL, ";");
+        }
+        
         PGresult* res = PQexec(conns[op->id], op->query);
         if (PQresultStatus(res) == PGRES_FATAL_ERROR) {
             fprintf(stderr, "Query failed: %s\n", PQresultErrorMessage(res));

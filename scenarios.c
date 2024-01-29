@@ -20,10 +20,16 @@ operations_t* load_operations_from_json(char *filename) {
         item_obj = json_object_array_get_idx(root, i);
         json_object *id_obj = json_object_object_get(item_obj, "id");
         json_object *query_obj = json_object_object_get(item_obj, "query");
+        json_object *comment_obj = json_object_object_get(item_obj, "comment");
         
         operation_t *op = (operation_t *) malloc(sizeof(operation_t));
         op->id = json_object_get_int(id_obj);
         op->query = strdup(json_object_get_string(query_obj));
+        if (comment_obj != NULL) {
+            op->comment = strdup(json_object_get_string(comment_obj));
+        } else {
+            op->comment = NULL;
+        }
         if (i == 0) {
             ops->first = op;
         } else {

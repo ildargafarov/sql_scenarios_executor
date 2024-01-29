@@ -1,6 +1,7 @@
 struct operation {
     int id;
     const char *query;
+    const char *comment;
     struct operation *next;
 };
 typedef struct operation operation_t;
