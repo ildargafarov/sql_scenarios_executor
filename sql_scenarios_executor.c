@@ -92,6 +92,9 @@ static void* start_worker(void *arg) {
             printf("=> %s\n", query_item);
             query_item = strtok(NULL, ";");
         }
+        if (!op->wait) {
+            printf("   Executing...\n\n", query_item);
+        }
         pthread_mutex_unlock(&print_mutex);
 
         PGresult* res = PQexec(worker->conn, op->query);
@@ -106,6 +109,9 @@ static void* start_worker(void *arg) {
         int rows = PQntuples(res);
         int cols = PQnfields(res);
         pthread_mutex_lock(&print_mutex);
+        if (!op->wait) {
+            printf("========= [%d] ==========\n", op->id);
+        }
         for (int row = 0; row < rows; row++) {
             printf("   ------ [%d] ------\n", row);
             for (int col = 0; col < cols; col++) {
@@ -193,6 +199,15 @@ int main(int argc, char *argv[]) {
             pthread_mutex_unlock(&worker_busy_mutex);
         }
     }
+
+    for(int i = 0; i < ids_number; i++) {
+        pthread_mutex_lock(&worker_busy_mutex);
+        while(busy_workers[i] != WORKER_READY) {
+            pthread_cond_wait(&worker_busy, &worker_busy_mutex); 
+        }
+        pthread_mutex_unlock(&worker_busy_mutex);
+    }
+
     pthread_mutex_lock(&worker_started_mutex);
     current_op = NULL;
     finished = 1;
