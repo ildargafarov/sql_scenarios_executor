@@ -31,9 +31,9 @@ test_dumb_scenario:
 	./scenarios_adapter
 
 run:
-	gcc -g -o sql_scenarios_executor sql_scenarios_executor.c scenarios.c -I/usr/include -lpq -ljson-c
+	gcc -g -pthread -o sql_scenarios_executor sql_scenarios_executor.c scenarios.c -I/usr/include -lpq -ljson-c
 	./sql_scenarios_executor --scenario "$(scenario)"
 
 debug:
-	gcc -g -o sql_scenarios_executor sql_scenarios_executor.c scenarios.c -I/usr/include -lpq -ljson-c
+	gcc -g -pthread -o sql_scenarios_executor sql_scenarios_executor.c scenarios.c -I/usr/include -lpq -ljson-c
 	gdb --args ./sql_scenarios_executor --scenario "$(scenario)"

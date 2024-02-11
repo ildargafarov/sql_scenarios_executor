@@ -2,9 +2,26 @@
 #include <stdio.h>
 #include <string.h>
 #include <libpq-fe.h>
+#include <pthread.h>
 #include "scenarios.h"
 
 #define PG_CONN_PARAMS_MAX_LEN 256
+
+#define WORKER_READY 0
+#define WORKER_BUSY 1
+
+static pthread_cond_t worker_started = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t worker_started_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static int finished = 0;
+static operation_t *current_op = NULL; 
+
+static pthread_cond_t worker_busy = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t worker_busy_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static int * busy_workers;
+
+static pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 char* pg_conn_params() {
     const char *PG_HOST_ADDR = getenv("POSTGRES_HOST_ADDR");
@@ -24,51 +41,50 @@ char* pg_conn_params() {
 
 int get_ids_number(operations_t *ops) {
     int max_id = -1;
-    operation_t *op = ops->first;
     for(int i = 0; i < ops->size; i++) {
-        if (op->id > max_id) {
-            max_id = op->id;
+        if (ops->operations[i]->id > max_id) {
+            max_id = ops->operations[i]->id;
         }
-        op = op->next;
     }
     return max_id + 1;
 }
 
-void clear(operations_t *ops, PGconn* conns[]) {
-    for (int i = 0; i < get_ids_number(ops); i++) {
-        PQfinish(conns[i]);
-    }
-    cleanup_operations(ops); 
-}
+struct Worker {
+    int id;
+    pthread_t tid;
+    PGconn *conn;
+};
 
-int init_conns(int conns_count, PGconn* conns[]) {
-    char* conn_params = pg_conn_params();
-    for (int i = 0; i < conns_count; i++) {
-        PGconn *conn = PQconnectdb(conn_params);
-        if (PQstatus(conn) == CONNECTION_BAD) {
-            fprintf(stderr, "Connection to database failed: %s\n", PQerrorMessage(conn));
-            PQfinish(conn);
-            for(int j = 0; j < i; j++) {
-                PQfinish(conns[j]);
+static void* start_worker(void *arg) {
+    struct Worker *worker = (struct Worker *) arg;
+    operation_t *op = NULL;
+    for(;;) {
+        pthread_mutex_lock(&worker_busy_mutex);
+        busy_workers[worker->id] = WORKER_READY;
+        pthread_mutex_unlock(&worker_busy_mutex);
+        pthread_cond_broadcast(&worker_busy);
+
+        pthread_mutex_lock(&worker_started_mutex);
+        while(current_op == NULL || current_op->id != worker->id || op == current_op) {
+            if (finished == 1) {
+                pthread_mutex_unlock(&worker_started_mutex);
+                return NULL;
             }
-            free(conn_params);
-            return 1;
+            pthread_cond_wait(&worker_started, &worker_started_mutex); 
         }
-        conns[i] = conn;
-    }
-    free(conn_params);
-    return 0;
-}
+        op = current_op;
+        pthread_mutex_unlock(&worker_started_mutex);
 
-void execute_scenario(operations_t *ops, PGconn* conns[]) {
-    operation_t *op = ops->first;
-    for(int i = 0; i < ops->size; i++) {
-        printf("========= [%d] ==========\n", op->id);
+        pthread_mutex_lock(&worker_busy_mutex);
+        busy_workers[worker->id] = WORKER_BUSY;
+        pthread_mutex_unlock(&worker_busy_mutex);
+        pthread_cond_broadcast(&worker_busy);
 
+        pthread_mutex_lock(&print_mutex);
+        printf("========= [%d] ==========\n", op->id); 
         if(op->comment != NULL) {
             printf("#  %s\n", op->comment);
         }
-
         char query_copy[strlen(op->query) + 1];
         strcpy(query_copy, op->query);
         char *query_item = strtok(query_copy, ";");
@@ -76,16 +92,20 @@ void execute_scenario(operations_t *ops, PGconn* conns[]) {
             printf("=> %s\n", query_item);
             query_item = strtok(NULL, ";");
         }
-        
-        PGresult* res = PQexec(conns[op->id], op->query);
+        pthread_mutex_unlock(&print_mutex);
+
+        PGresult* res = PQexec(worker->conn, op->query);
         if (PQresultStatus(res) == PGRES_FATAL_ERROR) {
+            pthread_mutex_lock(&print_mutex);
             fprintf(stderr, "Query failed: %s\n", PQresultErrorMessage(res));
+            fprintf(stderr, "Conn status: %s\n",PQerrorMessage(worker->conn));
+            pthread_mutex_unlock(&print_mutex);
             PQclear(res);
-            clear(ops, conns);
-            exit(1);
+            return NULL;
         }
         int rows = PQntuples(res);
         int cols = PQnfields(res);
+        pthread_mutex_lock(&print_mutex);
         for (int row = 0; row < rows; row++) {
             printf("   ------ [%d] ------\n", row);
             for (int col = 0; col < cols; col++) {
@@ -93,9 +113,16 @@ void execute_scenario(operations_t *ops, PGconn* conns[]) {
             }
         }
         printf("\n");
+        pthread_mutex_unlock(&print_mutex);
         PQclear(res);
-        op = op->next;
+
+        pthread_mutex_lock(&worker_busy_mutex);
+        busy_workers[worker->id] = WORKER_READY;
+        pthread_mutex_unlock(&worker_busy_mutex);
+        pthread_cond_broadcast(&worker_busy);
     }
+
+    return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -118,13 +145,61 @@ int main(int argc, char *argv[]) {
     operations_t *ops = load_operations_from_json(scenario_filename);
     
     int ids_number = get_ids_number(ops);
-    PGconn* conns[ids_number];
-    if(init_conns(ids_number, conns) == 1) {
-        cleanup_operations(ops); 
-    }
-    
-    execute_scenario(ops, conns);
+    struct Worker **workers = malloc(sizeof(struct Worker *) * ids_number);
+    busy_workers = malloc(sizeof(int) * ids_number);
+    char* conn_params = pg_conn_params();
 
-    clear(ops, conns);
+    for (int i = 0; i < ids_number; i++) {
+        workers[i] = malloc(sizeof(struct Worker));
+        workers[i]->id = i;
+        workers[i]->conn = PQconnectdb(conn_params);
+        if (PQstatus(workers[i]->conn) == CONNECTION_BAD) {
+            fprintf(stderr, "Connection to database failed: %s\n", PQerrorMessage(workers[i]->conn));
+            PQfinish(workers[i]->conn);
+            break;
+        }
+        if (pthread_create(&workers[i]->tid, NULL, start_worker, (void *) workers[i]) != 0) {
+            fprintf(stderr, "Thread creation failure\n");
+            break;
+        }
+    }
+    free(conn_params);
+
+    for(int i = 0; i < ops->size; i++) {
+        if (i != 0) {
+            pthread_mutex_lock(&worker_busy_mutex);
+            while(busy_workers[ops->operations[i]->id] != WORKER_READY) {
+                pthread_cond_wait(&worker_busy, &worker_busy_mutex); 
+            }
+            pthread_mutex_unlock(&worker_busy_mutex);
+        }
+
+        pthread_mutex_lock(&worker_started_mutex);
+        current_op = ops->operations[i];
+        pthread_mutex_unlock(&worker_started_mutex);
+        pthread_cond_broadcast(&worker_started);
+
+        pthread_mutex_lock(&worker_busy_mutex);
+        while(busy_workers[ops->operations[i]->id] != WORKER_BUSY) {
+            pthread_cond_wait(&worker_busy, &worker_busy_mutex); 
+        }
+        pthread_mutex_unlock(&worker_busy_mutex);
+
+        if (ops->operations[i]->wait) {
+            pthread_mutex_lock(&worker_busy_mutex);
+            while(busy_workers[ops->operations[i]->id] == WORKER_BUSY) {
+                pthread_cond_wait(&worker_busy, &worker_busy_mutex); 
+            }
+            pthread_mutex_unlock(&worker_busy_mutex);
+        }
+    }
+    pthread_mutex_lock(&worker_started_mutex);
+    current_op = NULL;
+    finished = 1;
+    pthread_mutex_unlock(&worker_started_mutex);
+    pthread_cond_broadcast(&worker_started);
+    cleanup_operations(ops);
+    free(workers);
+    free(busy_workers);
     return 0;
 }

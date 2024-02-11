@@ -2,12 +2,12 @@ struct operation {
     int id;
     const char *query;
     const char *comment;
-    struct operation *next;
+    int wait;
 };
 typedef struct operation operation_t;
 
 struct operations {
-    operation_t *first;
+    operation_t **operations;
     int size;
 };
 typedef struct operations operations_t;
