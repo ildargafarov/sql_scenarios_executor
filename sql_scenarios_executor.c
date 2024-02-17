@@ -100,11 +100,15 @@ static void* start_worker(void *arg) {
         PGresult* res = PQexec(worker->conn, op->query);
         if (PQresultStatus(res) == PGRES_FATAL_ERROR) {
             pthread_mutex_lock(&print_mutex);
-            fprintf(stderr, "Query failed: %s\n", PQresultErrorMessage(res));
-            fprintf(stderr, "Conn status: %s\n",PQerrorMessage(worker->conn));
+            if (!op->wait) {
+                printf("========= [%d] ==========\n", op->id);
+            }
+            fprintf(stderr, "   ------------------\n");
+            fprintf(stderr, "   Query %s", PQresultErrorMessage(res));
+            fprintf(stderr, "   Connection %s\n",PQerrorMessage(worker->conn));
             pthread_mutex_unlock(&print_mutex);
             PQclear(res);
-            return NULL;
+            continue;
         }
         int rows = PQntuples(res);
         int cols = PQnfields(res);
